@@ -1,3 +1,7 @@
+import subprocess
+import sys
+subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "PyNaCl", "discord.py[voice]"])
+
 import discord
 from discord.ext import commands
 import yt_dlp
@@ -41,12 +45,12 @@ except Exception:
 # ─────────────────────────────────────────────────────────────
 #  HER SUNUCU İÇİN HAFIZA
 # ─────────────────────────────────────────────────────────────
-queues      = {}   # sunucu id -> sarki kuyrugu
-volumes     = {}   # sunucu id -> ses seviyesi (0.0 - 1.0)
-now_playing = {}   # sunucu id -> su an calan sarki adi
+queues      = {}
+volumes     = {}
+now_playing = {}
 
 # ─────────────────────────────────────────────────────────────
-#  YT-DLP AYARLARI (YouTube indirici)
+#  YT-DLP AYARLARI
 # ─────────────────────────────────────────────────────────────
 YDL_OPTS = {
     "format": "bestaudio/best",
@@ -193,7 +197,7 @@ async def cal(ctx, *, sorgu: str):
 
     if "spotify.com" in sorgu:
         if sp is None:
-            return await ctx.send("Spotify baglantisi kurulamadi. Railway Variables kismini kontrol et.")
+            return await ctx.send("Spotify baglantisi kurulamadi.")
         await ctx.send("Spotify'dan sarkiler aliniyor, lutfen bekle...")
         sorgular = await spotify_sarkila(sorgu)
         if not sorgular:
@@ -338,9 +342,9 @@ async def yardim(ctx):
         name="Ses ve Kuyruk",
         value=(
             "`!ses <0-100>` — Ses seviyesini ayarla\n"
-            "`!kuyruk` — Kurugu goster\n"
+            "`!kuyruk` — Kuyrugu goster\n"
             "`!simdi` — Su an calanı goster\n"
-            "`!temizle` — Kurugu temizle\n"
+            "`!temizle` — Kuyrugu temizle\n"
         ),
         inline=False
     )
