@@ -35,27 +35,27 @@ queues      = {}
 volumes     = {}
 now_playing = {}
 
-YDL_OPTS = {
+# SoundCloud uzerinden ara (YouTube bot korumasini aslar)
+YDL_OPTS_SC = {
     "format": "bestaudio/best",
     "quiet": False,
     "no_warnings": False,
-    "noplaylist": False,
-    "default_search": "ytsearch",
+    "noplaylist": True,
+    "default_search": "scsearch",  # SoundCloud arama
     "source_address": "0.0.0.0",
-    "extractor_retries": 5,
+}
+
+# YouTube icin (direkt link verilirse)
+YDL_OPTS_YT = {
+    "format": "bestaudio/best",
+    "quiet": False,
+    "no_warnings": False,
+    "noplaylist": True,
+    "source_address": "0.0.0.0",
     "cookiefile": "cookies.txt",
-    "nocheckcertificate": True,
-    "ignoreerrors": False,
-    "logtostderr": False,
-    "geo_bypass": True,
-    "age_limit": None,
     "http_headers": {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     },
-    "postprocessors": [],
-    "prefer_insecure": False,
 }
 
 FFMPEG_OPTS = {
@@ -71,36 +71,51 @@ def get_queue(guild_id):
 def get_volume(guild_id):
     return volumes.get(guild_id, 0.5)
 
-async def youtube_ara(sorgu):
+async def ara(sorgu):
+    """
+    YouTube linki ise YouTube'dan, degilse SoundCloud'dan arar.
+    """
     loop = asyncio.get_event_loop()
 
-    # Farkli format secenekleri dene
-    format_secenekleri = [
-        "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best",
-        "worstaudio/bestaudio/best",
-        "bestaudio*",
-        "best",
-    ]
+    # YouTube linki mi?
+    is_youtube = "youtube.com" in sorgu or "youtu.be" in sorgu
 
-    for fmt in format_secenekleri:
-        try:
-            opts = dict(YDL_OPTS)
-            opts["format"] = fmt
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                bilgi = await loop.run_in_executor(
-                    None, lambda: ydl.extract_info(sorgu, download=False)
-                )
-                if "entries" in bilgi:
-                    bilgi = bilgi["entries"][0]
-                url = bilgi.get("url") or bilgi.get("webpage_url")
-                if url:
-                    print(f"[YouTube OK] Format: {fmt} | {bilgi.get('title')}")
-                    return {"title": bilgi.get("title", "Bilinmiyor"), "url": url}
-        except Exception as hata:
-            print(f"[YouTube Hata] Format {fmt}: {hata}")
-            continue
+    if is_youtube:
+        opts = YDL_OPTS_YT
+    else:
+        opts = YDL_OPTS_SC
 
-    return None
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            bilgi = await loop.run_in_executor(
+                None, lambda: ydl.extract_info(sorgu, download=False)
+            )
+            if "entries" in bilgi:
+                bilgi = bilgi["entries"][0]
+            url = bilgi.get("url")
+            title = bilgi.get("title", "Bilinmiyor")
+            print(f"[OK] Bulundu: {title}")
+            return {"title": title, "url": url}
+    except Exception as hata:
+        print(f"[Hata] {hata}")
+
+        # SoundCloud da basarisiz olduysa YouTube dene
+        if not is_youtube:
+            print("[Fallback] YouTube deneniyor...")
+            try:
+                yt_opts = dict(YDL_OPTS_YT)
+                yt_opts["default_search"] = "ytsearch"
+                with yt_dlp.YoutubeDL(yt_opts) as ydl:
+                    bilgi = await loop.run_in_executor(
+                        None, lambda: ydl.extract_info(sorgu, download=False)
+                    )
+                    if "entries" in bilgi:
+                        bilgi = bilgi["entries"][0]
+                    return {"title": bilgi.get("title", "Bilinmiyor"), "url": bilgi["url"]}
+            except Exception as e2:
+                print(f"[YouTube Fallback Hata] {e2}")
+
+        return None
 
 async def spotify_sarkila(spotify_url):
     if sp is None:
@@ -166,7 +181,7 @@ async def on_command_error(ctx, error):
     else:
         print(f"[Komut Hatasi] {error}")
 
-@bot.hybrid_command(name="cal", description="YouTube veya Spotify'dan muzik calar.")
+@bot.hybrid_command(name="cal", description="YouTube veya SoundCloud'dan muzik calar.")
 async def cal(ctx, *, sorgu: str):
     if not ctx.author.voice:
         return await ctx.send("Once bir ses kanalina gir, sonra komutu kullan!")
@@ -178,6 +193,7 @@ async def cal(ctx, *, sorgu: str):
         await vc.move_to(ctx.author.voice.channel)
     guild_id = ctx.guild.id
     kuyruk   = get_queue(guild_id)
+
     if "spotify.com" in sorgu:
         if sp is None:
             return await ctx.send("Spotify baglantisi kurulamadi.")
@@ -187,17 +203,19 @@ async def cal(ctx, *, sorgu: str):
             return await ctx.send("Spotify'dan sarki alinamadi. Linki kontrol et.")
         eklenen = 0
         for s in sorgular:
-            bilgi = await youtube_ara(s)
+            bilgi = await ara(s)
             if bilgi:
                 kuyruk.append(bilgi)
                 eklenen += 1
         await ctx.send(f"{eklenen} sarki kuyruga eklendi!")
     else:
-        bilgi = await youtube_ara(sorgu)
+        await ctx.send(f"🔍 `{sorgu}` aranıyor...")
+        bilgi = await ara(sorgu)
         if not bilgi:
             return await ctx.send("Sarki bulunamadi. Farkli bir sey dene.")
         kuyruk.append(bilgi)
         await ctx.send(f"Kuyruga eklendi: **{bilgi['title']}**")
+
     if not vc.is_playing() and not vc.is_paused():
         siradakini_cal(guild_id, vc)
         await ctx.send(f"Simdi caliniyor: **{now_playing.get(guild_id, '?')}**")
