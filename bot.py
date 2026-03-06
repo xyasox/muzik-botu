@@ -53,7 +53,7 @@ now_playing = {}
 #  YT-DLP AYARLARI
 # ─────────────────────────────────────────────────────────────
 YDL_OPTS = {
-    "format": "bestaudio/best",
+    "format": "bestaudio*/best*",
     "quiet": True,
     "no_warnings": True,
     "noplaylist": False,
