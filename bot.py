@@ -1,6 +1,51 @@
 import subprocess
 import sys
+import os
+
+# Gerekli Python paketlerini yukle
 subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "PyNaCl", "discord.py[voice]", "yt-dlp"])
+
+# ffmpeg'i sisteme yukle
+def ffmpeg_yukle():
+    try:
+        result = subprocess.run(["ffmpeg", "-version"], capture_output=True)
+        if result.returncode == 0:
+            print("[ffmpeg] Zaten yuklu!")
+            return
+    except FileNotFoundError:
+        pass
+
+    print("[ffmpeg] Yukleniyor...")
+    try:
+        subprocess.check_call(["apt-get", "install", "-y", "ffmpeg"])
+        print("[ffmpeg] apt-get ile yuklendi!")
+        return
+    except Exception as e:
+        print(f"[ffmpeg] apt-get basarisiz: {e}")
+
+    try:
+        subprocess.check_call(["apt", "install", "-y", "ffmpeg"])
+        print("[ffmpeg] apt ile yuklendi!")
+        return
+    except Exception as e:
+        print(f"[ffmpeg] apt basarisiz: {e}")
+
+    # Manuel indir
+    try:
+        print("[ffmpeg] Manuel indiriliyor...")
+        subprocess.check_call([
+            "wget", "-q",
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
+            "-O", "/tmp/ffmpeg.tar.xz"
+        ])
+        subprocess.check_call(["tar", "-xf", "/tmp/ffmpeg.tar.xz", "-C", "/tmp/"])
+        subprocess.check_call(["cp", "/tmp/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg", "/usr/local/bin/ffmpeg"])
+        subprocess.check_call(["chmod", "+x", "/usr/local/bin/ffmpeg"])
+        print("[ffmpeg] Manuel yukleme basarili!")
+    except Exception as e:
+        print(f"[ffmpeg] Manuel yukleme basarisiz: {e}")
+
+ffmpeg_yukle()
 
 import discord
 from discord.ext import commands
@@ -8,7 +53,6 @@ import yt_dlp
 import asyncio
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
-import os
 from collections import deque
 
 DISCORD_TOKEN         = os.environ.get("DISCORD_TOKEN")
@@ -35,17 +79,15 @@ queues      = {}
 volumes     = {}
 now_playing = {}
 
-# SoundCloud uzerinden ara (YouTube bot korumasini aslar)
 YDL_OPTS_SC = {
     "format": "bestaudio/best",
     "quiet": False,
     "no_warnings": False,
     "noplaylist": True,
-    "default_search": "scsearch",  # SoundCloud arama
+    "default_search": "scsearch",
     "source_address": "0.0.0.0",
 }
 
-# YouTube icin (direkt link verilirse)
 YDL_OPTS_YT = {
     "format": "bestaudio/best",
     "quiet": False,
@@ -72,49 +114,18 @@ def get_volume(guild_id):
     return volumes.get(guild_id, 0.5)
 
 async def ara(sorgu):
-    """
-    YouTube linki ise YouTube'dan, degilse SoundCloud'dan arar.
-    """
     loop = asyncio.get_event_loop()
-
-    # YouTube linki mi?
     is_youtube = "youtube.com" in sorgu or "youtu.be" in sorgu
-
-    if is_youtube:
-        opts = YDL_OPTS_YT
-    else:
-        opts = YDL_OPTS_SC
-
+    opts = YDL_OPTS_YT if is_youtube else YDL_OPTS_SC
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
-            bilgi = await loop.run_in_executor(
-                None, lambda: ydl.extract_info(sorgu, download=False)
-            )
+            bilgi = await loop.run_in_executor(None, lambda: ydl.extract_info(sorgu, download=False))
             if "entries" in bilgi:
                 bilgi = bilgi["entries"][0]
-            url = bilgi.get("url")
-            title = bilgi.get("title", "Bilinmiyor")
-            print(f"[OK] Bulundu: {title}")
-            return {"title": title, "url": url}
+            print(f"[OK] Bulundu: {bilgi.get('title')}")
+            return {"title": bilgi.get("title", "Bilinmiyor"), "url": bilgi["url"]}
     except Exception as hata:
         print(f"[Hata] {hata}")
-
-        # SoundCloud da basarisiz olduysa YouTube dene
-        if not is_youtube:
-            print("[Fallback] YouTube deneniyor...")
-            try:
-                yt_opts = dict(YDL_OPTS_YT)
-                yt_opts["default_search"] = "ytsearch"
-                with yt_dlp.YoutubeDL(yt_opts) as ydl:
-                    bilgi = await loop.run_in_executor(
-                        None, lambda: ydl.extract_info(sorgu, download=False)
-                    )
-                    if "entries" in bilgi:
-                        bilgi = bilgi["entries"][0]
-                    return {"title": bilgi.get("title", "Bilinmiyor"), "url": bilgi["url"]}
-            except Exception as e2:
-                print(f"[YouTube Fallback Hata] {e2}")
-
         return None
 
 async def spotify_sarkila(spotify_url):
@@ -124,10 +135,8 @@ async def spotify_sarkila(spotify_url):
     loop = asyncio.get_event_loop()
     try:
         if "track" in spotify_url:
-            sarki   = await loop.run_in_executor(None, lambda: sp.track(spotify_url))
-            sanatci = sarki["artists"][0]["name"]
-            ad      = sarki["name"]
-            sorgular.append(f"{sanatci} - {ad}")
+            sarki = await loop.run_in_executor(None, lambda: sp.track(spotify_url))
+            sorgular.append(f"{sarki['artists'][0]['name']} - {sarki['name']}")
         elif "playlist" in spotify_url:
             sonuclar = await loop.run_in_executor(None, lambda: sp.playlist_tracks(spotify_url))
             for ogre in sonuclar["items"][:25]:
@@ -149,10 +158,9 @@ def siradakini_cal(guild_id, voice_client):
         return
     sarki = kuyruk.popleft()
     now_playing[guild_id] = sarki["title"]
-    ses_seviyesi = get_volume(guild_id)
     kaynak = discord.PCMVolumeTransformer(
         discord.FFmpegPCMAudio(sarki["url"], **FFMPEG_OPTS),
-        volume=ses_seviyesi,
+        volume=get_volume(guild_id),
     )
     def bitti(hata):
         if hata:
@@ -168,23 +176,21 @@ async def on_ready():
         print(f"Slash komut sync hatasi: {e}")
     print(f"Bot aktif: {bot.user.name}")
     print(f"{len(bot.guilds)} sunucuda calisiyor.")
-    await bot.change_presence(
-        activity=discord.Activity(type=discord.ActivityType.listening, name="!yardim")
-    )
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="!yardim"))
 
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
-        await ctx.send("Boyle bir komut yok. Komutlar icin `!yardim` yaz.")
+        await ctx.send("Boyle bir komut yok. `!yardim` yaz.")
     elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("Eksik bilgi girdin. Ornek: `!cal Tarkan Simarik`")
+        await ctx.send("Eksik bilgi. Ornek: `!cal Tarkan Simarik`")
     else:
         print(f"[Komut Hatasi] {error}")
 
-@bot.hybrid_command(name="cal", description="YouTube veya SoundCloud'dan muzik calar.")
+@bot.hybrid_command(name="cal", description="Muzik calar.")
 async def cal(ctx, *, sorgu: str):
     if not ctx.author.voice:
-        return await ctx.send("Once bir ses kanalina gir, sonra komutu kullan!")
+        return await ctx.send("Once bir ses kanalina gir!")
     await ctx.defer()
     vc = ctx.voice_client
     if not vc:
@@ -192,15 +198,14 @@ async def cal(ctx, *, sorgu: str):
     elif vc.channel != ctx.author.voice.channel:
         await vc.move_to(ctx.author.voice.channel)
     guild_id = ctx.guild.id
-    kuyruk   = get_queue(guild_id)
-
+    kuyruk = get_queue(guild_id)
     if "spotify.com" in sorgu:
         if sp is None:
             return await ctx.send("Spotify baglantisi kurulamadi.")
-        await ctx.send("Spotify'dan sarkiler aliniyor, lutfen bekle...")
+        await ctx.send("Spotify'dan sarkiler aliniyor...")
         sorgular = await spotify_sarkila(sorgu)
         if not sorgular:
-            return await ctx.send("Spotify'dan sarki alinamadi. Linki kontrol et.")
+            return await ctx.send("Spotify'dan sarki alinamadi.")
         eklenen = 0
         for s in sorgular:
             bilgi = await ara(s)
@@ -209,27 +214,26 @@ async def cal(ctx, *, sorgu: str):
                 eklenen += 1
         await ctx.send(f"{eklenen} sarki kuyruga eklendi!")
     else:
-        await ctx.send(f"🔍 `{sorgu}` aranıyor...")
+        await ctx.send(f"Aranıyor: `{sorgu}`...")
         bilgi = await ara(sorgu)
         if not bilgi:
-            return await ctx.send("Sarki bulunamadi. Farkli bir sey dene.")
+            return await ctx.send("Sarki bulunamadi.")
         kuyruk.append(bilgi)
         await ctx.send(f"Kuyruga eklendi: **{bilgi['title']}**")
-
     if not vc.is_playing() and not vc.is_paused():
         siradakini_cal(guild_id, vc)
         await ctx.send(f"Simdi caliniyor: **{now_playing.get(guild_id, '?')}**")
 
-@bot.hybrid_command(name="dur", description="Muzigi duraklatir.")
+@bot.hybrid_command(name="dur", description="Duraklatir.")
 async def dur(ctx):
     vc = ctx.voice_client
     if vc and vc.is_playing():
         vc.pause()
-        await ctx.send("Duraklatildi. Devam ettirmek icin `!devam` yaz.")
+        await ctx.send("Duraklatildi. `!devam` ile devam et.")
     else:
         await ctx.send("Su an calan bir sey yok.")
 
-@bot.hybrid_command(name="devam", description="Duraklatilmis muzigi devam ettirir.")
+@bot.hybrid_command(name="devam", description="Devam ettirir.")
 async def devam(ctx):
     vc = ctx.voice_client
     if vc and vc.is_paused():
@@ -238,100 +242,74 @@ async def devam(ctx):
     else:
         await ctx.send("Duraklatilmis bir sey yok.")
 
-@bot.hybrid_command(name="atla", description="Mevcut sarkiyi atlar.")
+@bot.hybrid_command(name="atla", description="Sonraki sarkiya gecer.")
 async def atla(ctx):
     vc = ctx.voice_client
     if vc and (vc.is_playing() or vc.is_paused()):
         vc.stop()
-        await ctx.send("Atlandi! Siradaki sarkiya geciliyor...")
+        await ctx.send("Atlandi!")
     else:
         await ctx.send("Calan bir sey yok.")
 
-@bot.hybrid_command(name="durdur", description="Muzigi durdurur ve ses kanalindan cikar.")
+@bot.hybrid_command(name="durdur", description="Durdurur ve cıkar.")
 async def durdur(ctx):
-    guild_id = ctx.guild.id
-    queues.pop(guild_id, None)
-    now_playing.pop(guild_id, None)
+    queues.pop(ctx.guild.id, None)
+    now_playing.pop(ctx.guild.id, None)
     vc = ctx.voice_client
     if vc:
         await vc.disconnect()
-        await ctx.send("Muzik durduruldu ve kanaldan cikildi.")
+        await ctx.send("Durduruldu ve kanaldan cıkıldı.")
     else:
-        await ctx.send("Bot zaten bir ses kanalinda degil.")
+        await ctx.send("Bot zaten kanalda degil.")
 
-@bot.hybrid_command(name="ses", description="Ses seviyesini ayarlar (0 ile 100 arasi).")
+@bot.hybrid_command(name="ses", description="Ses seviyesi (0-100).")
 async def ses(ctx, seviye: int):
     if not (0 <= seviye <= 100):
-        return await ctx.send("Lutfen 0 ile 100 arasinda bir sayi gir. Ornek: `!ses 75`")
-    guild_id = ctx.guild.id
-    volumes[guild_id] = seviye / 100
+        return await ctx.send("0-100 arasi bir sayi gir.")
+    volumes[ctx.guild.id] = seviye / 100
     vc = ctx.voice_client
     if vc and vc.source:
         vc.source.volume = seviye / 100
-    dolu  = int(seviye / 10)
-    bos   = 10 - dolu
-    cubuk = "\u2588" * dolu + "\u2591" * bos
+    cubuk = "\u2588" * int(seviye/10) + "\u2591" * (10 - int(seviye/10))
     await ctx.send(f"Ses: [{cubuk}] **{seviye}%**")
 
-@bot.hybrid_command(name="kuyruk", description="Muzik kuyrugunu gosterir.")
+@bot.hybrid_command(name="kuyruk", description="Kuyrugu gosterir.")
 async def kuyruk_goster(ctx):
     kuyruk = get_queue(ctx.guild.id)
-    su_an  = now_playing.get(ctx.guild.id)
+    su_an = now_playing.get(ctx.guild.id)
     if not su_an and not kuyruk:
-        return await ctx.send("Kuyruk bos. Muzik eklemek icin `!cal <sarki adi>` kullan.")
+        return await ctx.send("Kuyruk bos. `!cal <sarki>` ile ekle.")
     satirlar = []
     if su_an:
-        satirlar.append(f"Simdi caliniyor: **{su_an}**")
+        satirlar.append(f"Simdi: **{su_an}**")
         satirlar.append("-" * 30)
-    for i, sarki in enumerate(list(kuyruk)[:10], 1):
-        satirlar.append(f"{i}. {sarki['title']}")
+    for i, s in enumerate(list(kuyruk)[:10], 1):
+        satirlar.append(f"{i}. {s['title']}")
     if len(kuyruk) > 10:
-        satirlar.append(f"... ve {len(kuyruk) - 10} sarki daha.")
-    satirlar.append(f"\nToplam kuyrukta: **{len(kuyruk)} sarki**")
+        satirlar.append(f"... ve {len(kuyruk)-10} sarki daha.")
     await ctx.send("\n".join(satirlar))
 
-@bot.hybrid_command(name="simdi", description="Su an calan sarkiyi gosterir.")
+@bot.hybrid_command(name="simdi", description="Su an calani gosterir.")
 async def simdi(ctx):
     su_an = now_playing.get(ctx.guild.id)
-    if su_an:
-        await ctx.send(f"Simdi caliniyor: **{su_an}**")
-    else:
-        await ctx.send("Su an calan bir sarki yok.")
+    await ctx.send(f"Simdi caliniyor: **{su_an}**" if su_an else "Su an calan bir sarki yok.")
 
-@bot.hybrid_command(name="temizle", description="Muzik kuyrugunu temizler.")
+@bot.hybrid_command(name="temizle", description="Kuyrugu temizler.")
 async def temizle(ctx):
     queues.pop(ctx.guild.id, None)
-    await ctx.send("Kuyruk temizlendi! Tum sarkiler silindi.")
+    await ctx.send("Kuyruk temizlendi!")
 
-@bot.hybrid_command(name="yardim", description="Tum komutlari listeler.")
+@bot.hybrid_command(name="yardim", description="Komutlari listeler.")
 async def yardim(ctx):
-    embed = discord.Embed(
-        title="Muzik Botu — Komut Listesi",
-        description="Asagidaki komutlari kullanabilirsin:",
-        color=discord.Color.blue()
-    )
-    embed.add_field(name="Muzik Cal", value=(
-        "`!cal <sarki adi>` — Sarki ara ve cal\n"
-        "`!cal <YouTube linki>` — YouTube'dan cal\n"
-        "`!cal <Spotify linki>` — Spotify'dan cal\n"
-    ), inline=False)
-    embed.add_field(name="Kontroller", value=(
-        "`!dur` — Duraklat\n"
-        "`!devam` — Devam et\n"
-        "`!atla` — Sonraki sarkiya gec\n"
-        "`!durdur` — Durdur ve cik\n"
-    ), inline=False)
-    embed.add_field(name="Ses ve Kuyruk", value=(
-        "`!ses <0-100>` — Ses seviyesini ayarla\n"
-        "`!kuyruk` — Kuyrugu goster\n"
-        "`!simdi` — Su an calanı goster\n"
-        "`!temizle` — Kuyrugu temizle\n"
-    ), inline=False)
+    embed = discord.Embed(title="Muzik Botu Komutlari", color=discord.Color.blue())
+    embed.add_field(name="Muzik Cal", value="`!cal <sarki>` `!cal <YouTube linki>` `!cal <Spotify linki>`", inline=False)
+    embed.add_field(name="Kontroller", value="`!dur` `!devam` `!atla` `!durdur`", inline=False)
+    embed.add_field(name="Ses & Kuyruk", value="`!ses <0-100>` `!kuyruk` `!simdi` `!temizle`", inline=False)
     embed.set_footer(text="Ornek: !cal Tarkan Simarik")
     await ctx.send(embed=embed)
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
-        print("DISCORD_TOKEN bulunamadi! Railway'de Variables kismina ekle.")
+        print("DISCORD_TOKEN bulunamadi!")
     else:
         bot.run(DISCORD_TOKEN)
