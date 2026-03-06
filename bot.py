@@ -36,7 +36,7 @@ volumes     = {}
 now_playing = {}
 
 YDL_OPTS = {
-    "format": "worstaudio/bestaudio",
+    "format": "bestaudio/best",
     "quiet": False,
     "no_warnings": False,
     "noplaylist": False,
@@ -44,9 +44,18 @@ YDL_OPTS = {
     "source_address": "0.0.0.0",
     "extractor_retries": 5,
     "cookiefile": "cookies.txt",
+    "nocheckcertificate": True,
+    "ignoreerrors": False,
+    "logtostderr": False,
+    "geo_bypass": True,
+    "age_limit": None,
     "http_headers": {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     },
+    "postprocessors": [],
+    "prefer_insecure": False,
 }
 
 FFMPEG_OPTS = {
@@ -64,17 +73,34 @@ def get_volume(guild_id):
 
 async def youtube_ara(sorgu):
     loop = asyncio.get_event_loop()
-    try:
-        with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
-            bilgi = await loop.run_in_executor(
-                None, lambda: ydl.extract_info(sorgu, download=False)
-            )
-            if "entries" in bilgi:
-                bilgi = bilgi["entries"][0]
-            return {"title": bilgi.get("title", "Bilinmiyor"), "url": bilgi["url"]}
-    except Exception as hata:
-        print(f"[YouTube Hata] {hata}")
-        return None
+
+    # Farkli format secenekleri dene
+    format_secenekleri = [
+        "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best",
+        "worstaudio/bestaudio/best",
+        "bestaudio*",
+        "best",
+    ]
+
+    for fmt in format_secenekleri:
+        try:
+            opts = dict(YDL_OPTS)
+            opts["format"] = fmt
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                bilgi = await loop.run_in_executor(
+                    None, lambda: ydl.extract_info(sorgu, download=False)
+                )
+                if "entries" in bilgi:
+                    bilgi = bilgi["entries"][0]
+                url = bilgi.get("url") or bilgi.get("webpage_url")
+                if url:
+                    print(f"[YouTube OK] Format: {fmt} | {bilgi.get('title')}")
+                    return {"title": bilgi.get("title", "Bilinmiyor"), "url": url}
+        except Exception as hata:
+            print(f"[YouTube Hata] Format {fmt}: {hata}")
+            continue
+
+    return None
 
 async def spotify_sarkila(spotify_url):
     if sp is None:
