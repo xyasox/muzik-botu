@@ -1,0 +1,40 @@
+# Ortam değişkenleri (TOKEN'LAR BURAYA YAZILMAZ!)
+.env
+.env.local
+.env.*.local
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Sanal ortam
+venv/
+env/
+.venv/
+.ENV/
+
+# Log dosyaları
+*.log
+logs/
+
+# OS dosyaları
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / editör
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dağıtım / build
+dist/
+build/
+*.egg-info/
+
+# Geçici dosyalar
+*.tmp
+*.bak
