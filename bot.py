@@ -60,6 +60,7 @@ YDL_OPTS = {
     "default_search": "ytsearch",
     "source_address": "0.0.0.0",
     "extractor_retries": 3,
+    "cookiefile": "cookies.txt",
 }
 
 FFMPEG_OPTS = {
